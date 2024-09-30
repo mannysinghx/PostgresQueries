@@ -1,0 +1,73 @@
+# PostgreSQL Materialized View Performance Analyzer
+
+This repository contains a SQL query designed to analyze the performance of materialized views in a PostgreSQL database, specifically within the `cdrv1` schema. The query provides comprehensive insights into the current state of your materialized views, identifies potential performance issues, and suggests optimization techniques.
+
+## Features
+
+- Identifies all materialized views in the `sample` schema
+- Gathers detailed statistics on each materialized view
+- Calculates size metrics for materialized views and their indexes
+- Detects potential performance issues based on various factors
+- Provides specific recommendations for performance tuning
+
+## Query Overview
+
+The main query is structured using Common Table Expressions (CTEs) to organize the data gathering and analysis process:
+
+1. `mv_list`: Identifies all materialized views in the `sample` schema.
+2. `mv_stats`: Gathers detailed statistics for each materialized view from `pg_stat_user_tables`.
+3. `mv_size`: Calculates size metrics for each materialized view and its indexes.
+
+The main SELECT statement then combines this information and adds performance analysis and recommendations.
+
+## Performance Factors Analyzed
+
+The query considers several factors that can affect materialized view performance:
+
+- Number of sequential scans
+- Ratio of dead tuples to live tuples
+- Vacuum and analyze history
+- Number of modifications since the last analyze
+
+## Recommendations
+
+Based on the analysis, the query may recommend actions such as:
+
+- Creating indexes to reduce sequential scans
+- Running VACUUM to clean up dead tuples
+- Running ANALYZE to update statistics
+
+## How to Use
+
+1. Connect to your PostgreSQL database using your preferred client.
+2. Copy and paste the entire query into your client.
+3. Execute the query.
+4. Review the results, paying special attention to the `performance_issue` and `recommended_action` columns.
+
+## Interpreting Results
+
+The query returns one row per materialized view in the `sample` schema. Each row includes:
+
+- Basic information about the materialized view
+- Statistical data from `pg_stat_user_tables`
+- Size information
+- A `performance_issue` column describing any detected issues
+- A `recommended_action` column suggesting a specific action to address the issue
+
+## Important Notes
+
+- Always test recommended actions in a non-production environment before applying them to your production database.
+- Performance tuning is an iterative process. After making changes, re-run this query and monitor your system's performance to assess the impact.
+- The query assumes you have appropriate permissions to access system catalogs and statistics views.
+
+## Customization
+
+You can modify the `schemaname = 'sample'` condition in the query to analyze materialized views in different schemas.
+
+## Contributing
+
+Contributions to improve this query or extend its functionality are welcome. Please feel free to submit issues or pull requests.
+
+## License
+
+This query is provided under the MIT License. See the LICENSE file for details.
