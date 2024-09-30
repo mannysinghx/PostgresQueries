@@ -1,0 +1,132 @@
+This PostgreSQL code is a complex query that analyzes database performance and suggests potential indexes to improve query efficiency. Let's break it down step by step:
+
+Common Table Expressions (CTEs):
+The query uses four CTEs to gather information from various system tables:
+a. column_stats: Retrieves column-level statistics from pg_stats.
+b. table_stats: Gets table-level statistics from pg_stat_user_tables, focusing on tables with over 1000 rows in the 'SAMPLE HERE' schema.
+c. query_patterns: Analyzes query patterns from pg_stat_statements, focusing on SELECT queries called more than 10 times.
+d. existing_indexes: Retrieves information about existing indexes from pg_indexes for the 'SAMPLE HERE' schema.
+Main Query:
+The main query joins these CTEs to identify potential missing indexes based on several criteria:
+
+It focuses on tables where sequential scans significantly outnumber index scans.
+It considers columns that are frequently used in WHERE, ORDER BY, or GROUP BY clauses.
+It takes into account the number of distinct values (n_distinct) and the correlation of the column data.
+
+
+Index Suggestions:
+The query suggests creating new indexes based on the following conditions:
+
+For columns with high negative correlation and many distinct values: a descending index
+For columns with high positive correlation and many distinct values: an ascending index
+For columns with a very high number of distinct values: a regular index
+
+
+Output:
+The query returns various statistics and the suggested index creation SQL for each identified opportunity. It also indicates whether a similar index already exists.
+Limitations:
+The query limits its output to 20 results, ordered by the number of sequential scans, query calls, and the number of distinct values in descending order.
+
+This query is a powerful tool for database administrators to identify potential performance improvements through strategic index creation. It combines various performance metrics and query patterns to make informed suggestions about where new indexes might be beneficial.
+
+--My Trail to build a Missing index Query based on Seq Scans.
+
+WITH 
+-- CTE to get column-level statistics
+column_stats AS (
+SELECT 
+schemaname,
+tablename,
+attname AS column_name,
+n_distinct,
+correlation
+FROM pg_stats
+WHERE schemaname NOT IN ('pg_catalog', 'information_schema')
+),
+-- CTE to get table-level statistics
+table_stats AS (
+SELECT 
+schemaname,
+relname,
+seq_scan,
+idx_scan,
+n_live_tup,
+n_dead_tup
+FROM pg_stat_user_tables
+WHERE n_live_tup > 1000  -- Focusing on tables with significant data
+AND schemaname='HERE'
+),
+-- CTE to analyze query patterns from pg_stat_statements
+query_patterns AS (
+SELECT 
+left(query, 200) AS query_sample,
+calls,
+total_time,
+mean_time,
+rows,
+regexp_matches(query, 'FROM\s+(\w+)', 'g') AS table_name,
+regexp_matches(query, 'WHERE\s+([^;]+)', 'g') AS where_clause,
+regexp_matches(query, 'ORDER BY\s+([^;]+)', 'g') AS order_by_clause,
+regexp_matches(query, 'GROUP BY\s+([^;]+)', 'g') AS group_by_clause
+FROM pg_stat_statements
+WHERE query !~ '^(?:UPDATE|INSERT|DELETE)'
+AND calls > 10  -- Focus on frequently called queries
+),
+-- CTE to get existing index information
+existing_indexes AS (
+SELECT 
+schemaname,
+tablename,
+indexname,
+indexdef
+FROM pg_indexes
+--WHERE schemaname <> 'pg_catalog'
+WHERE schemaname = 'HERE'
+)
+-- Main query to suggest missing indexes
+SELECT 
+ts.schemaname,
+ts.relname AS table_name,
+cs.column_name,
+cs.n_distinct,
+cs.correlation,
+ts.seq_scan,
+ts.idx_scan,
+qp.calls AS query_calls,
+qp.total_time AS query_total_time,
+qp.query_sample,
+CASE 
+WHEN cs.correlation < -0.5 AND cs.n_distinct > 100 THEN 
+'CREATE INDEX idx_' || ts.relname || '_' || cs.column_name || 
+' ON ' || ts.schemaname || '.' || ts.relname || ' (' || cs.column_name || ' DESC)'
+WHEN cs.correlation > 0.5 AND cs.n_distinct > 100 THEN 
+'CREATE INDEX idx_' || ts.relname || '_' || cs.column_name || 
+' ON ' || ts.schemaname || '.' || ts.relname || ' (' || cs.column_name || ' ASC)'
+WHEN cs.n_distinct > 1000 THEN
+'CREATE INDEX idx_' || ts.relname || '_' || cs.column_name || 
+' ON ' || ts.schemaname || '.' || ts.relname || ' (' || cs.column_name || ')'
+ELSE NULL
+END AS suggested_index,
+CASE 
+WHEN ei.indexname IS NULL THEN 'New Index'
+ELSE 'Similar Index Exists'
+END AS index_status
+FROM table_stats ts
+JOIN column_stats cs ON ts.schemaname = cs.schemaname AND ts.relname = cs.tablename
+LEFT JOIN query_patterns qp ON qp.table_name[1] = ts.relname
+LEFT JOIN existing_indexes ei ON ei.schemaname = ts.schemaname 
+AND ei.tablename = ts.relname 
+AND ei.indexdef LIKE '%' || cs.column_name || '%'
+WHERE (ts.seq_scan > ts.idx_scan * 2 OR ts.idx_scan IS NULL)
+AND (
+(qp.where_clause IS NOT NULL AND qp.where_clause[1] LIKE '%' || cs.column_name || '%')
+OR (qp.order_by_clause IS NOT NULL AND qp.order_by_clause[1] LIKE '%' || cs.column_name || '%')
+OR (qp.group_by_clause IS NOT NULL AND qp.group_by_clause[1] LIKE '%' || cs.column_name || '%')
+OR cs.n_distinct > 1000
+)
+AND ei.indexname IS NULL
+ORDER BY 
+ts.seq_scan DESC,
+qp.calls DESC NULLS LAST,
+cs.n_distinct DESC
+LIMIT 20;
