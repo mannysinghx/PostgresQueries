@@ -1,0 +1,84 @@
+
+WITH mv_list AS (
+    SELECT schemaname, matviewname 
+    FROM pg_matviews
+    WHERE schemaname = 'SAMPLE'
+),
+mv_stats AS (
+    SELECT
+        s.schemaname,
+        s.relname,
+        s.last_vacuum,
+        s.last_autovacuum,
+        s.last_analyze,
+        s.last_autoanalyze,
+        s.vacuum_count,
+        s.autovacuum_count,
+        s.analyze_count,
+        s.autoanalyze_count,
+        s.seq_scan,
+        s.seq_tup_read,
+        s.idx_scan,
+        s.idx_tup_fetch,
+        s.n_tup_ins,
+        s.n_tup_upd,
+        s.n_tup_del,
+        s.n_live_tup,
+        s.n_dead_tup,
+        s.n_mod_since_analyze
+    FROM
+        pg_stat_user_tables s
+    JOIN
+        mv_list m ON s.schemaname = m.schemaname AND s.relname = m.matviewname
+),
+mv_size AS (
+    SELECT
+        s.schemaname,
+        s.relname,
+        pg_size_pretty(pg_total_relation_size(s.relid)) AS total_size,
+        pg_size_pretty(pg_indexes_size(s.relid)) AS index_size,
+        pg_size_pretty(pg_table_size(s.relid)) AS table_size
+    FROM
+        pg_catalog.pg_statio_user_tables s
+    JOIN
+        mv_list m ON s.schemaname = m.schemaname AND s.relname = m.matviewname
+)
+SELECT
+    s.*,
+    sz.total_size,
+    sz.index_size,
+    sz.table_size,
+    CASE
+        WHEN s.seq_scan > 0 THEN
+            'High sequential scans (' || s.seq_scan || '). Consider adding indexes.'
+        WHEN s.n_dead_tup > s.n_live_tup * 0.2 THEN
+            'High number of dead tuples. Consider running VACUUM.'
+        WHEN s.last_vacuum IS NULL AND s.last_autovacuum IS NULL THEN
+            'Never vacuumed. Consider running VACUUM.'
+        WHEN s.last_analyze IS NULL AND s.last_autoanalyze IS NULL THEN
+            'Never analyzed. Consider running ANALYZE.'
+        WHEN s.n_mod_since_analyze > s.n_live_tup * 0.1 THEN
+            'Many modifications since last analyze. Consider running ANALYZE.'
+        ELSE
+            'No immediate performance issues detected.'
+    END AS performance_issue,
+    CASE
+        WHEN s.seq_scan > 0 THEN
+            'CREATE INDEX ON SAMPLE.' || s.relname || ' (column_name);'
+        WHEN s.n_dead_tup > s.n_live_tup * 0.2 THEN
+            'VACUUM SAMPLE.' || s.relname || ';'
+        WHEN s.last_vacuum IS NULL AND s.last_autovacuum IS NULL THEN
+            'VACUUM SAMPLE.' || s.relname || ';'
+        WHEN s.last_analyze IS NULL AND s.last_autoanalyze IS NULL THEN
+            'ANALYZE SAMPLE.' || s.relname || ';'
+        WHEN s.n_mod_since_analyze > s.n_live_tup * 0.1 THEN
+            'ANALYZE SAMPLE.' || s.relname || ';'
+        ELSE
+            'No immediate action required.'
+    END AS recommended_action
+FROM
+    mv_stats s
+JOIN
+    mv_size sz ON s.schemaname = sz.schemaname AND s.relname = sz.relname
+ORDER BY
+    s.schemaname, s.relname;
